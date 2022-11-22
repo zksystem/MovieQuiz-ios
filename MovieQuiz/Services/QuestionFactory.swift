@@ -7,34 +7,67 @@
 
 import Foundation
 
-fileprivate let questionString: String = "Рейтинг этого фильма больше чем 6?"
+fileprivate let questionString: String = "Рейтинг этого фильма больше чем 7?"
+fileprivate let questionScore: Float = 7
 
 class QuestionFactory : QuestionFactoryProtocol {
-    weak var delegate: QuestionFactoryDelegate?
+    private let moviesLoader: MoviesLoading
+    private var delegate: QuestionFactoryDelegate?
+    private var movies: [MostPopularMovie] = []
     
-    init(delegate: QuestionFactoryDelegate?) {
+    init(moviesLoader: MoviesLoading, delegate: QuestionFactoryDelegate?) {
+        self.moviesLoader = moviesLoader
         self.delegate = delegate
     }
     
-    func requestNextQuestion() {
-        guard let index = (0..<questions.count).randomElement() else {
-            delegate?.didRecieveNextQuestion(question: nil)
-            return
-        }
-        let question = questions[safe: index]
-        delegate?.didRecieveNextQuestion(question: question)
+    enum ApiError: Error {
+        case responseError(String)
+        case imageError(String)
     }
     
-    private let questions: [QuizQuestion] = [
-        QuizQuestion(image: "The Godfather", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "The Dark Knight", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "Kill Bill", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "The Avengers", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "Deadpool", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "The Green Knight", text: questionString, correctAnswer: true),
-        QuizQuestion(image: "Old", text: questionString, correctAnswer: false),
-        QuizQuestion(image: "The Ice Age Adventures of Buck Wild", text: questionString, correctAnswer: false),
-        QuizQuestion(image: "Tesla", text: questionString, correctAnswer: false),
-        QuizQuestion(image: "Vivarium", text: questionString, correctAnswer: false)
-    ]
+    func loadData() {
+        moviesLoader.loadMovies { [weak self] result in
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                switch result {
+                case .success(let mostPopularMovies):
+                    let apiErrorMessage = mostPopularMovies.errorMessage
+                    if apiErrorMessage.isEmpty {
+                        self.movies = mostPopularMovies.items
+                        self.delegate?.didLoadDataFromServer() }
+                    else {
+                        self.delegate?.didFailToLoadData(with: ApiError.responseError(apiErrorMessage))
+                    }
+                case.failure(let error):
+                    self.delegate?.didFailToLoadData(with: error)
+                }
+            }
+        }
+    }
+    
+    func requestNextQuestion() {
+        DispatchQueue.global().async { [weak self] in
+            guard let self = self else { return }
+            let index = (0..<self.movies.count).randomElement() ?? 0
+            guard let movie = self.movies[safe: index] else { return }
+            var imageData = Data()
+            
+            do {
+                imageData = try Data(contentsOf: movie.resizedImageURL)
+            } catch {
+                let imageLoadingError = "Unable to load image: " + movie.imageURL.absoluteString
+                self.delegate?.didFailToLoadData(with: ApiError.imageError(imageLoadingError))
+            }
+            
+            let rating = Float(movie.rating) ?? 0
+            let text = questionString
+            let correctAnswer = rating > questionScore
+            let question = QuizQuestion(image: imageData, text: text, correctAnswer: correctAnswer)
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.didReceiveNextQuestion(question: question)
+            }
+        }
+    }
 }
