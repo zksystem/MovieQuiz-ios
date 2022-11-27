@@ -14,12 +14,13 @@ final class MovieQuizPresenter: QuestionFactoryDelegate {
     private var correctAnswers: Int = 0
     
     private var currentQuestion: QuizQuestion?
-    
+    private let statisticService: StatisticService!
     private var questionFactory: QuestionFactoryProtocol?
     private weak var viewController: MovieQuizViewController?
     
-    init(viewController: MovieQuizViewController) {
-        self.viewController = viewController
+    init(viewController: MovieQuizViewControllerProtocol) {
+        self.viewController = viewController as? MovieQuizViewController
+        statisticService = StatisticServiceImplementation()
         questionFactory = QuestionFactory(moviesLoader: MoviesLoader(), delegate: self)
         questionFactory?.loadData()
         viewController.showLoadingIndicator()
@@ -41,14 +42,6 @@ final class MovieQuizPresenter: QuestionFactoryDelegate {
     
     func switchToNextQuestion() {
         currentQuestionIndex += 1
-    }
-    
-    func getQuestionsAmout() -> Int {
-        questionsAmount
-    }
-    
-    func getCorrectAnswers() -> Int {
-        correctAnswers
     }
     
     func incCorrectAnswers() {
@@ -74,7 +67,51 @@ final class MovieQuizPresenter: QuestionFactoryDelegate {
         didAnswer(isYes: false)
     }
     
-    // MARK: - Delegates
+    func getResultsMessage() -> String {
+        statisticService.store(correct: correctAnswers, total: questionsAmount)
+        
+        let bestGame = statisticService.bestGame
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "dd.MM.YYYY HH:mm"
+        let alertText = """
+            Ваш результат: \(correctAnswers) из 10
+            Количество сыграных квизов: \(statisticService.gamesCount)
+            Рекорд: \(bestGame.correct)/\(bestGame.total) (\(dateFormatter.string(from: bestGame.date)))
+            Средняя точность: (\(String(format: "%.2f", statisticService.totalAccuracy))%)
+            """
+        return alertText
+    }
+    
+    private func showAnswerResult(isCorrect: Bool) {
+        viewController?.showImageBorder(isCorrect: isCorrect)
+        
+        if isCorrect {
+            incCorrectAnswers()
+        }
+        
+        viewController?.showLoadingIndicator()
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.showNextQuestionOrResults()
+            self.viewController?.hideLoadingIndicator()
+        }
+    }
+    
+    private func showNextQuestionOrResults() {
+        if self.isLastQuestion() {
+            viewController?.showEndGameAlert()
+        } else {
+            self.switchToNextQuestion()
+            questionFactory?.requestNextQuestion()
+        }
+    }
+    
+    
+    private func didAnswer(isYes: Bool) {
+        guard let currentQuestion = currentQuestion else { return }
+        showAnswerResult(isCorrect: isYes == currentQuestion.correctAnswer)
+    }
+    
     
     func didLoadDataFromServer() {
         viewController?.hideLoadingIndicator()
@@ -93,19 +130,4 @@ final class MovieQuizPresenter: QuestionFactoryDelegate {
             self?.viewController?.show(quiz: viewModel)
         }
     }
-    
-    func showNextQuestionOrResults() {
-        if self.isLastQuestion() {
-            viewController?.showEndGameAlert()
-        } else {
-            self.switchToNextQuestion()
-            questionFactory?.requestNextQuestion()
-        }
-    }
-    
-    private func didAnswer(isYes: Bool) {
-        guard let currentQuestion = currentQuestion else { return }
-        viewController?.showAnswerResult(isCorrect: isYes == currentQuestion.correctAnswer)
-    }
-    
 }
